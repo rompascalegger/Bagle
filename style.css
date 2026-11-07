@@ -232,3 +232,66 @@ button{font-family:inherit;font-weight:900;cursor:pointer}
   #wallet{padding:8px 10px}
   .slots{grid-template-columns:repeat(auto-fill,minmax(62px,1fr))}
 }
+
+/* ---------- v2: economy, work, minigames ---------- */
+.chip.link{cursor:pointer}
+.chip.link:hover{background:rgba(255,255,255,.18)}
+.news-chip{background:rgba(255,90,31,.25);border-color:rgba(255,154,31,.5)}
+#tabs{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}
+#tabs button{min-width:0;padding:6px 0}
+#tabs button span{font-size:9.5px;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.o-hint{font-size:11.5px;color:#1f6e3a;margin-top:2px}
+.o-hint b{color:#1f8e46}
+.o-hint.flat{color:#a0846a}
+.advisor{background:#eaf7e6;border:2px solid #9fd89a;border-radius:10px;padding:8px 10px;font-size:12.5px;margin-bottom:10px}
+.advisor div{margin-top:3px}
+.advisor small{display:block;color:var(--ink2);margin-top:4px;font-weight:700}
+.up{color:#1f8e46}.down{color:#c0392b}
+.inn{display:flex;gap:8px}
+.inn .btn{flex:1;line-height:1.15}
+.inn .btn small{font-size:10.5px;font-weight:800;opacity:.8}
+.news{background:#fffaf0;border:2px solid var(--paper3);border-radius:10px;padding:7px 10px;font-size:12.5px;margin-bottom:6px}
+.news.on{border-color:#ff9a1f;background:#fff0dc}
+.news small{color:var(--ink2);font-weight:700}
+.xcats{display:flex;flex-wrap:wrap;gap:5px;margin:10px 0 8px}
+.xhead,.xrow{display:grid;grid-template-columns:minmax(0,1fr) 60px 46px 40px 54px;gap:5px;align-items:center;font-size:12.5px}
+.xhead{color:var(--ink2);font-size:11px;padding:0 8px}
+.xrow{background:#fffaf0;border-radius:9px;padding:5px 8px;margin-top:4px;border:2px solid transparent}
+.xrow.here{border-color:var(--gold)}
+.xrow.locked{opacity:.45}
+.xt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.xi{font-family:'Lilita One',cursive;font-size:15px}
+.xi.best{color:#1f8e46}.xi.worst{color:#c0392b}
+.xc{font-size:11.5px}
+.xc.up{color:#1f8e46}.xc.down{color:#c0392b}
+.xs{text-align:right}
+.spark{width:60px;height:22px}
+
+.energy{display:flex;align-items:center;gap:2px;margin-bottom:6px;font-size:12px;color:var(--ink2)}
+.energy i{font-style:normal;font-size:18px;filter:grayscale(1) opacity(.35)}
+.energy i.on{filter:none}
+.energy span{margin-left:8px}
+.prof-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;margin-top:8px}
+.prof{background:#fffaf0;border:3px solid #1c0f08;border-radius:12px;padding:6px 8px;text-align:left;display:flex;flex-direction:column;gap:1px;box-shadow:0 3px 0 rgba(0,0,0,.2);color:var(--ink)}
+.prof:hover{background:#fff0b8;transform:translateY(-2px)}
+.prof.on{background:#ffe28a}
+.prof b{font-size:24px}
+.pn{font-family:'Lilita One',cursive;font-size:14px;font-weight:400}
+.pp{font-size:11px;color:var(--ink2);font-weight:700}
+.pr{font-size:15px}
+.ing{display:inline-block;background:#f7d9d0;border-radius:6px;padding:0 4px;font-size:12px}
+.ing.ok{background:#d6f2d0}
+.relabel{display:flex;flex-wrap:wrap;gap:5px}
+.steal-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.steal-grid .btn{line-height:1.15}
+.steal-grid small{font-weight:800;opacity:.85}
+.mg-bar{display:flex;justify-content:space-between;font-size:15px;margin:6px 0}
+.whack{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;touch-action:manipulation}
+.hole{aspect-ratio:1;border-radius:50%;background:radial-gradient(circle at 50% 70%,#5a3a22,#2a180e);border:3px solid #1c0f08;display:flex;align-items:center;justify-content:center;font-size:34px;cursor:pointer;user-select:none}
+.hole.up{animation:popup .15s ease-out;background:radial-gradient(circle at 50% 70%,#8a5a32,#3a2416)}
+.hole.hit{background:radial-gradient(circle,#9ff0b8,#3ec46d)}
+.hole.oops{background:radial-gradient(circle,#ff9b8f,#e8473b)}
+@keyframes popup{from{transform:scale(.4)}to{transform:scale(1)}}
+.steal-bar{position:relative;height:46px;background:#e8d3a8;border:3px solid #1c0f08;border-radius:12px;margin:14px 0 6px;overflow:hidden}
+.steal-zone{position:absolute;top:0;bottom:0;background:linear-gradient(180deg,#9ff0b8,#3ec46d);border-left:2px dashed #1f6e3a;border-right:2px dashed #1f6e3a}
+.steal-needle{position:absolute;top:50%;transform:translate(-50%,-50%);font-size:30px;filter:drop-shadow(0 2px 0 rgba(0,0,0,.4))}

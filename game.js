@@ -95,8 +95,10 @@ const ITEMS = [
   ['crate', 'Rebel Supply Crate', '📦', 'contra', 200, 2, 'Deliver to Rebel Hollow. Do NOT open. It ticks.', 1],
   ['tomato', 'Thrown Tomato', '🍅', 'food', 1, 0, 'A bard threw this at you. Rude.', 1],
   ['bagle', 'The Golden Bagle', '🥯', 'trinket', 1000000, 5, 'The bag of all bags. Also edible?', 1],
-].map(([id, name, e, cat, base, r, desc, sp]) => ({ id, name, e, cat, base, r, desc, special: !!sp }));
+].concat(EXTRA_ITEMS.map(r => r.slice(0, 7).concat([1])))
+  .map(([id, name, e, cat, base, r, desc, sp]) => ({ id, name, e, cat, base, r, desc, special: !!sp }));
 const IT = Object.fromEntries(ITEMS.map(i => [i.id, i]));
+const INVENTED = new Set(BASE_RECIPES.concat(...PROFESSIONS.map(p => p.recipes)).map(r => r.out));
 
 const TOWNS = [
   { id: 'mud', name: 'Muddlebrook', e: '🐄', lvl: 1, dist: 0, strict: .15, fake: .07,
@@ -179,6 +181,11 @@ const ACH = [
   ['courier', '📦', 'Viva la Bag!', 'Deliver a rebel crate', s => s.stats.crates >= 1],
   ['contract', '📜', 'Reliable', 'Complete 10 contracts', s => s.stats.contracts >= 10],
   ['asc', '🌟', 'Pass the Bag', 'Ascend once', s => s.threads >= 1],
+  ['job', '💼', 'Hard Worker', 'Work 10 shifts', s => s.stats.jobsDone >= 10],
+  ['inventor', '💡', 'Inventor', 'Invent 10 things', s => s.stats.crafted >= 10],
+  ['forger', '🏷️', 'Premium Quality™', 'Relabel 10 items', s => s.stats.relabeled >= 10],
+  ['thief', '🧤', 'Sticky Fingers', 'Pickpocket 10 times', s => s.stats.stolen >= 10],
+  ['career', '💼', 'Employed!', 'Pick a profession', s => !!s.prof],
 ].map(([id, e, n, d, f]) => ({ id, e, n, d, f }));
 
 const KARMA_MS = [
@@ -199,8 +206,10 @@ function newState(keep) {
     town: 'mud', day: 1, xp: 0, lvl: 1, karma: 0, heat: 0,
     rep: { guild: 0, rebels: 0, pirates: 0 }, up: {}, market: [], days: {}, rumors: {}, rumorText: [],
     contracts: [], ach: {}, karmaMs: {}, streak: 0, threads: 0, muted: false, tab: 'travel', log: [],
+    energy: 5, prof: null, dem: {}, hist: {}, world: [], blessing: 0, xcat: 'food',
     stats: { sold: 0, profit: 0, earned: 0, fakesSold: 0, caught: 0, mystery: 0, jackpots: 0, deeds: 0, fights: 0, wins: 0,
-      visited: { mud: 1 }, bestSale: 0, bestStreak: 0, goldenFound: 0, chickens: 0, crates: 0, contracts: 0, ascensions: 0 },
+      visited: { mud: 1 }, bestSale: 0, bestStreak: 0, goldenFound: 0, chickens: 0, crates: 0, contracts: 0, ascensions: 0,
+      crafted: 0, stolen: 0, jobsDone: 0, relabeled: 0 },
   };
   if (keep) {
     st.threads = keep.threads; st.ach = keep.ach; st.muted = keep.muted;
@@ -216,6 +225,7 @@ function load() {
     const d = JSON.parse(raw);
     const base = newState();
     const st = Object.assign(base, d);
+    if (st.energy == null) st.energy = 5;
     st.stats = Object.assign(newState().stats, d.stats || {});
     st.rep = Object.assign({ guild: 0, rebels: 0, pirates: 0 }, d.rep || {});
     return st;
@@ -233,16 +243,11 @@ const lvlScale = (b = 1.35) => Math.pow(b, S.lvl - 1);
 const xpNeed = l => Math.floor(30 * Math.pow(l, 1.75));
 const saleXP = profit => 3 + 7 * Math.log10(1 + Math.max(profit, 0));
 const unlocked = t => S.lvl >= t.lvl || (t.id === 'rebel' && (S.rep.rebels >= 10 || S.inv.some(i => i.id === 'crate')));
-const critChance = () => .03 + lv('luck') * .02 + (bag().crit || 0);
-const km = () => bag().karma || 1;
+const critChance = () => .03 + lv('luck') * .02 + (bag().crit || 0) + pp('crit');
+const km = () => (bag().karma || 1) * (1 + pp('karma'));
 
 function baseVal(it, q, tid) {
-  const t = TW[tid], d = S.days[tid] || {};
-  let v = it.base * QMULT[q - 1] * (t.m[it.cat] || 1);
-  if (d.noise) v *= d.noise[it.cat] || 1;
-  if (d.hot === it.cat) v *= d.hotM;
-  if (d.crash === it.cat) v *= .5;
-  return v;
+  return it.base * QMULT[q - 1] * (TW[tid].m[it.cat] || 1) * demandOf(tid, it.cat);
 }
 const buyMod = () => 1.1 - lv('tongue') * .015;
 function sellMult(tid) {
@@ -257,7 +262,7 @@ function sellPrice(inv, tid = S.town) {
   const it = IT[inv.id];
   if (it.id === 'chicken') return null;
   if (it.id === 'crate') return tid === 'rebel' ? crateVal() : 3;
-  return Math.max(1, Math.round(baseVal(it, inv.q, tid) * sellMult(tid)));
+  return Math.max(1, Math.round(baseVal(it, inv.q, tid) * sellMult(tid) * profMult(it) * (S.blessing > 0 ? 1.3 : 1)));
 }
 function netWorth() {
   return S.money + S.inv.reduce((a, i) => a + (sellPrice(i) || 0), 0);
@@ -273,13 +278,14 @@ const upgCost = u => Math.round(u.base * Math.pow(u.g, lv(u.id)));
 /* ---------- world simulation ---------- */
 function rollDays() {
   const cats = Object.keys(CATS);
+  worldTick();
   for (const t of TOWNS) {
-    const noise = {}; for (const c of cats) noise[c] = rnd(.82, 1.22);
     let hot = null, hotM = 1, crash = null;
-    if (Math.random() < .45) { hot = pick(cats); hotM = rnd(1.7, 2.6); }
-    if (Math.random() < .25) crash = pick(cats.filter(c => c !== hot));
-    S.days[t.id] = { noise, hot, hotM, crash };
+    if (Math.random() < .3) { hot = pick(cats); hotM = rnd(1.6, 2.3); }
+    if (Math.random() < .18) crash = pick(cats.filter(c => c !== hot));
+    S.days[t.id] = { hot, hotM, crash };
   }
+  recordHist();
   S.rumors = {}; S.rumorText = [];
 }
 function genMarket() {
@@ -305,7 +311,9 @@ function genMarket() {
   S.market = offers;
 }
 function arrivalRumors() {
-  const n = 1 + Math.floor(lv('network') / 2);
+  const n = 1 + Math.floor(lv('network') / 2) + pp('rumor');
+  const up = upcomingEvents()[0];
+  if (up && Math.random() < .6) S.rumorText.push(`${pick(RUMOR_LINES)} "I heard ${WE[up.id].e} <b>${WE[up.id].name}</b> starts in ${up.start - S.day} day(s)! ${evEffects(WE[up.id])}"`);
   const others = TOWNS.filter(t => t.id !== S.town && unlocked(t));
   for (let i = 0; i < n && others.length; i++) {
     const t = others.splice(Math.floor(Math.random() * others.length), 1)[0];
@@ -318,7 +326,7 @@ function arrivalRumors() {
   }
 }
 function nextDay() {
-  S.day++; S.jobs = 0;
+  S.day++; S.energy = MAX_ENERGY;
   S.heat = clamp(S.heat - 8, 0, 100);
   rollDays();
   // contracts
@@ -391,9 +399,10 @@ function sell(u, el, fast) {
   const inv = S.inv[k], it = IT[inv.id], t = town();
   const rect = el ? el.getBoundingClientRect() : null;
   // guards!
-  const isFake = inv.fake && !t.fence, isContra = it.cat === 'contra' && !t.contra;
+  const isFake = (inv.fake || inv.forged) && !t.fence, isContra = it.cat === 'contra' && !t.contra;
   if (isFake || isContra) {
-    const ch = Math.min(.6, t.strict * (1 - (bag().sneak || 0)) * (1 + S.heat / 100) * (isContra ? .8 : .6));
+    const forgeOnly = inv.forged && !inv.fake && !isContra;
+    const ch = Math.min(.6, t.strict * (1 - sneakTotal()) * (1 + S.heat / 100) * (isContra ? .8 : .6) * (forgeOnly ? 1 - pp('forge') : 1));
     if (Math.random() < ch) { busted(k, isContra); return false; }
   }
   let price, jack = 1, note = '';
@@ -409,6 +418,7 @@ function sell(u, el, fast) {
   if (it.id !== 'crate' && Math.random() < critChance()) { jack = pick([2, 2, 2, 3, 3, 5]); price *= jack; }
   S.inv.splice(k, 1);
   S.money += price;
+  if (S.blessing > 0 && it.id !== 'chicken') { S.blessing--; note += ' ✨ Blessed +30%!'; }
   const profit = price - inv.paid;
   S.stats.sold++; S.stats.earned += price;
   if (profit > 0) { S.stats.profit += profit; S.streak = Math.min(25, S.streak + 1); S.stats.bestStreak = Math.max(S.stats.bestStreak, S.streak); }
@@ -446,7 +456,7 @@ function busted(k, isContra) {
   commit();
   showModal({
     art: '👮', title: 'BUSTED!',
-    text: `<p>${pick(quotes)}</p><p>A guard confiscates your ${it.e} <b>${it.name}</b> — it's ${isContra ? '<b>CONTRABAND</b>' : 'a <b>FAKE</b>'}!</p><p>Fine: <b>${fmt(fine)}</b>. Heat +25, Guild -4.</p><p class="sub">Tip: a 🎒 Smuggler's Duffel hides illegal goods. Rebel Hollow buys fakes with no questions asked.</p>`,
+    text: `<p>${pick(quotes)}</p><p>A guard confiscates your ${it.e} <b>${it.name}</b> — it's ${isContra ? '<b>CONTRABAND</b>' : inv.forged && !inv.fake ? 'got a <b>FORGED QUALITY LABEL</b>' : 'a <b>FAKE</b>'}!</p><p>Fine: <b>${fmt(fine)}</b>. Heat +25, Guild -4.</p><p class="sub">Tip: a 🎒 Smuggler's Duffel hides illegal goods. Rebel Hollow buys fakes with no questions asked.</p>`,
     choices: [{ label: 'Sorry, officer… 😓' }],
   });
 }
@@ -485,13 +495,22 @@ function travel(tid) {
 }
 function sleep() {
   const c = innCost();
-  if (S.money < c) { toast('💸 Not even enough for the inn. You sleep in your bag.'); }
-  else S.money -= c;
+  if (S.money < c) { SFX.bad(); return toast('💸 Not enough for the inn. Try the street — it\'s free!'); }
+  S.money -= c;
   nextDay(); genMarket(); arrivalRumors(); S.streak = 0;
   SFX.travel();
-  log(`🛏️ Day ${S.day}: Slept at the inn in ${town().name}. Fresh market!`);
+  log(`🛏️ Day ${S.day}: Slept at the inn in ${town().name}. Fresh market & rumors, ⚡ restored.`);
   commit();
   if (Math.random() < .18) setTimeout(() => showModal(evNight()), 250);
+}
+function sleepStreet() {
+  nextDay(); arrivalRumors(); S.streak = 0;
+  // same old market (no new deals), but prices on your bag items still move
+  SFX.travel();
+  log(`🛌 Day ${S.day}: Slept on the street in ${town().name}. Free! ⚡ restored, same old market.`);
+  commit();
+  const ev = evStreet();
+  if (ev) setTimeout(() => { showModal(ev); commit(); }, 250);
 }
 function buyBag(id) {
   const b = BG[id];
@@ -570,7 +589,7 @@ function deliver(u) {
   const used = have.slice(0, c.qty);
   const fakes = used.filter(i => i.fake).length;
   S.inv = S.inv.filter(i => !used.includes(i));
-  let reward = c.reward, msg = '';
+  let reward = Math.round(c.reward * (1 + pp('contract'))), msg = '';
   if (fakes && c.giver === 'guild' && Math.random() < .6) { reward = Math.round(reward / 2); S.rep.guild -= 5; addKarma(-2); msg = ` The guild noticed ${fakes} fake(s)! Half pay, Guild -5.`; }
   else if (fakes && c.giver === 'rebels') { reward = Math.round(reward * 1.2); msg = ' The rebels LOVE fakes. +20%!'; }
   S.money += reward; S.rep[c.giver] += 5; S.stats.contracts++;
@@ -611,15 +630,15 @@ function ascend() {
     ],
   });
 }
-const isIllegal = i => i.fake || IT[i.id].cat === 'contra';
+const isIllegal = i => i.fake || i.forged || IT[i.id].cat === 'contra';
 
 /* ---------- travel events ---------- */
 function travelEvent() {
   const evs = [
-    { w: S.rep.pirates >= 30 ? .6 : (S.inv.length ? (S.town === 'grogg' ? 2.6 : 1.5) : .4), f: evPirates },
+    { w: S.rep.pirates >= 30 || pp('pirate') ? .6 : (S.inv.length ? (S.town === 'grogg' ? 2.6 : 1.5) : .4), f: evPirates },
     { w: 1.4, f: evBeggar },
     { w: S.lvl >= 4 && free() > 0 ? .8 : 0, f: evCourier },
-    { w: free() > 0 ? 1 : 0, f: evFound },
+    { w: free() > 0 ? 1 * (pp('found') || 1) : 0, f: evFound },
     { w: S.money > 60 ? .8 : 0, f: evTax },
     { w: free() > 0 ? .9 : 0, f: evGnome },
     { w: .6, f: evBard },
@@ -627,12 +646,12 @@ function travelEvent() {
     { w: S.inv.some(isIllegal) ? .6 + S.heat / 80 : 0, f: evInspector },
     { w: .45, f: evParade },
     { w: S.inv.length ? .6 : 0, f: evGoblin },
-  ];
+  ].concat(extraEvents());
   const ev = wpick(evs, e => e.w);
   showModal(ev.f());
 }
 function fightChance() {
-  return clamp(.3 + lv('guard') * .07 + (bag().pirate ? .15 : 0) + (S.karma < 0 ? Math.min(-S.karma, 50) * .002 : 0), .05, .95);
+  return clamp(.3 + lv('guard') * .07 + (bag().pirate ? .15 : 0) + pp('fight') + (S.karma < 0 ? Math.min(-S.karma, 50) * .002 : 0), .05, .95);
 }
 function loseItems(n) {
   const names = [];
@@ -644,7 +663,7 @@ function loseItems(n) {
 }
 function evPirates() {
   const capt = pick(['Captain Ravenbeard', 'Admiral Soggybottom', 'One-Eyed Gertrude', 'Captain Wobblepeg', 'Barnacle Bob the Unwashed']);
-  if (S.rep.pirates >= 30) return {
+  if (S.rep.pirates >= 30 || pp('pirate')) return {
     art: '🏴‍☠️', title: 'Pirate Ambush?',
     text: `<p><b>${capt}</b>'s crew jumps out of a bush… then recognizes you.</p><p>"Oi, it's our mate! Carry on, love." They pat your bag affectionately.</p>`,
     choices: [{ label: 'Arr! 🏴‍☠️', act: () => { gainXP(10 * S.lvl); } }],
@@ -692,7 +711,7 @@ function evBeggar() {
   const who = pick(['a starving goblin child', 'an old dwarf with no beard (tragic)', 'a sad wizard who lost his hat', 'a tiny knight with a giant debt', 'a troll who only wants a hug']);
   const cheapest = S.inv.filter(i => i.id !== 'crate').sort((a, b) => IT[a.id].base - IT[b.id].base)[0];
   const coin = Math.max(5, Math.round(S.money * .05));
-  const godChance = S.karma >= 10 ? .2 : .05;
+  const godChance = (S.karma >= 10 ? .2 : .05) * (pp('god') || 1);
   const maybeGod = fallback => (Math.random() < godChance ? godGift() : fallback);
   return {
     art: '🥺', title: 'A Beggar!',
@@ -740,6 +759,11 @@ function evFound() {
 function evTax() {
   const tax = Math.ceil(S.money * .08), bribe = Math.ceil(S.money * .04);
   const argue = clamp(.25 + lv('tongue') * .06, 0, .9);
+  if (pp('taxman')) {
+    const cut = Math.round(rnd(10, 30) * lvlScale(1.4));
+    return { art: '🧾', title: 'A Fellow Tax Collector', text: `<p>The Imperial tax collector spots your clipboard. "Ah, a colleague!" He splits today's take with you: <b>${fmt(cut)}</b>.</p>`,
+      choices: [{ label: 'Taxes are beautiful 🥲', act: () => { S.money += cut; } }] };
+  }
   return {
     art: '🧾', title: 'Imperial Tax Collector',
     text: `<p>"By decree of the Emperor, all bags are taxed. Bag tax. It's a new thing." He taps his clipboard.</p>`,
@@ -883,6 +907,13 @@ function renderTop() {
   $('#tb-karma').title = 'Karma: good deeds → bag-god blessings & better prices. Bad deeds → pirates & rebels like you more.';
   $('#tb-heat').innerHTML = S.heat > 0 ? `🚨 Heat ${S.heat}` : '👮 Clean';
   $('#tb-heat').title = 'Heat: how much the guards suspect you. Decays every day.';
+  $('#tb-energy').innerHTML = `⚡ ${S.energy}/${MAX_ENERGY}`;
+  $('#tb-energy').title = 'Energy for jobs, inventing, relabeling and pickpocketing. Refills when you sleep or travel.';
+  $('#tb-prof').innerHTML = prof() ? `${prof().e} ${prof().name}` : '💼 Unemployed';
+  $('#tb-prof').dataset.act = 'tab'; $('#tb-prof').dataset.arg = 'work';
+  const ae = activeEvents();
+  $('#tb-news').innerHTML = ae.length ? ae.map(w => `${WE[w.id].e} ${WE[w.id].name}`).join(' · ') : (upcomingEvents().length ? '🔮 Something is coming…' : '📰 Quiet times');
+  $('#tb-news').dataset.act = 'tab'; $('#tb-news').dataset.arg = 'exchange';
   $('#tb-nw').textContent = `Net worth ${fmt(netWorth())}${S.threads ? ' · 🧵' + S.threads : ''}`;
   $('#btn-mute').textContent = S.muted ? '🔇' : '🔊';
 }
@@ -893,12 +924,17 @@ function renderMarket() {
   if (d.crash) dem.push(`📉 ${CATS[d.crash].e} ${CATS[d.crash].name} crashed (×0.5)`);
   if (!dem.length) dem.push('A normal day. Prices are… normal.');
   const rum = S.rumorText.map(r => `<div class="rumor">🍺 ${r}</div>`).join('');
+  const ev = activeEvents().map(w => `<div class="rumor" style="font-style:normal">📰 <b>${WE[w.id].e} ${WE[w.id].name}</b> ${evEffects(WE[w.id])} (${w.end - S.day + 1}d left)</div>`).join('');
+  const tips = tradeTips();
+  const adv = tips.length ? `<div class="advisor"><b>💡 Best trades from here</b>${tips.map(x => `<div>${IT[x.o.id].e} buy <b>${fmt(x.o.price)}</b> → sell in ${x.b.t.e} ${x.b.t.name} <b>${fmt(x.b.p)}</b> <span class="up">+${Math.round(x.pct * 100)}%</span></div>`).join('')}<small>Travel costs extra. Prices change daily — check 📈 Exchange.</small></div>`
+    : `<div class="advisor"><b>💡 No great trades here today.</b><small>Sleep for new deals, travel, or check the 📈 Exchange and 🛠️ Work tabs.</small></div>`;
   const offers = S.market.map((o, k) => {
     const it = IT[o.id];
     return `<div class="offer r${it.r} ${o.stock <= 0 ? 'soldout' : S.money < o.price ? 'poor' : ''}" data-act="buy" data-arg="${k}" title="${it.desc}">
       <div class="o-emoji">${it.e}</div>
       <div class="o-info"><div class="o-name">${it.name}</div>
-        <div class="o-meta">${stars(o.q)} <span>${CATS[it.cat].e}</span> <span class="rt" style="color:${RCOL[it.r]}">${RAR[it.r]}</span> <span>×${o.stock}</span></div></div>
+        <div class="o-meta">${stars(o.q)} <span>${CATS[it.cat].e}</span> <span class="rt" style="color:${RCOL[it.r]}">${RAR[it.r]}</span> <span>×${o.stock}</span></div>
+        ${hintFor(o)}</div>
       <div class="o-price">${o.stock > 0 ? fmt(o.price) : 'SOLD'}</div>
       ${o.rev ? '<div class="stamp">FAKE</div>' : ''}
     </div>`;
@@ -906,10 +942,11 @@ function renderMarket() {
   $('#market').innerHTML = `
     <h2>${t.e} ${t.name} Market</h2>
     <p class="sub">${t.desc}</p>
-    <div class="demand">${dem.join('<br>')}${rum}</div>
+    <div class="demand">${dem.join('<br>')}${ev}${rum}</div>${adv}
     <div class="offers">${offers}</div>
-    <div class="inn"><button class="btn sm wide" data-act="sleep">🛏️ Sleep at the inn (${fmt(innCost())}) — new day, new deals</button></div>
-    ${S.money < travelCostMin() && !S.inv.length ? `<div class="inn"><button class="btn sm wide good" data-act="jobs" ${(S.jobs || 0) >= 5 ? 'disabled' : ''}>🧹 Do odd jobs for coins (${5 - (S.jobs || 0)} left today)</button></div>` : ''}`;
+    <div class="inn"><button class="btn sm" data-act="sleep" ${S.money < innCost() ? 'disabled' : ''}>🛏️ Inn ${fmt(innCost())}<br><small>new deals + rumors</small></button>
+      <button class="btn sm" data-act="street">🛌 Street (free)<br><small>same market, risky</small></button></div>
+    ${S.money < travelCostMin() && !S.inv.length ? `<div class="demand" style="margin-top:10px">💸 <b>Broke?</b> Go to the <b>🛠️ Work</b> tab: work a shift, invent mud water, or pickpocket someone.</div>` : ''}`;
 }
 function renderBag() {
   const b = bag(), cap = capacity(), t = town();
@@ -917,11 +954,12 @@ function renderBag() {
   for (const i of S.inv) {
     const it = IT[i.id], p = sellPrice(i);
     const cls = p === null ? 'mid' : p > i.paid * 1.02 ? 'up' : p < i.paid * .98 ? 'down' : 'mid';
-    const risky = (i.rev && !t.fence) || (it.cat === 'contra' && !t.contra);
-    slots += `<div class="slot filled r${it.r}" data-act="sell" data-arg="${i.u}" title="${it.name} (${i.q}★)\n${it.desc}\nPaid ${fmt(i.paid)} · Click to SELL${risky ? '\n⚠️ Guards might catch this here!' : ''}">
+    const risky = ((i.rev || i.forged) && !t.fence) || (it.cat === 'contra' && !t.contra);
+    const bs = p === null ? null : bestSale(i);
+    slots += `<div class="slot filled r${it.r}" data-act="sell" data-arg="${i.u}" title="${it.name} (${i.q}★)\n${it.desc}\nPaid ${fmt(i.paid)} · Click to SELL${bs && bs.t.id !== S.town ? `\nBest today: ${bs.t.name} ${fmt(bs.p)}` : ''}${i.forged ? '\n🏷️ Forged quality label' : ''}${risky ? '\n⚠️ Guards might catch this here!' : ''}">
       <span class="s-q">${'★'.repeat(i.q)}</span>${it.cat === 'contra' ? '<span class="s-tag">☠️</span>' : ''}
       <div class="s-e">${it.e}</div><div class="s-p ${cls}">${p === null ? '₲???' : fmt(p)}</div>
-      ${i.rev ? '<div class="stamp">FAKE</div>' : ''}${risky ? '<span class="s-tag" style="top:auto;bottom:2px">⚠️</span>' : ''}</div>`;
+      ${i.rev ? '<div class="stamp">FAKE</div>' : ''}${i.forged ? '<span class="s-tag" style="top:auto;bottom:2px;left:4px;right:auto">🏷️</span>' : ''}${risky ? '<span class="s-tag" style="top:auto;bottom:2px">⚠️</span>' : ''}</div>`;
   }
   for (let k = S.inv.length; k < cap; k++) slots += '<div class="slot empty"></div>';
   const bagVal = S.inv.reduce((a, i) => a + (sellPrice(i) || 0), 0);
@@ -948,6 +986,8 @@ function renderSide() {
   const body = $('#tabbody');
   if (S.tab === 'travel') body.innerHTML = renderTravel();
   else if (S.tab === 'shop') body.innerHTML = renderShop();
+  else if (S.tab === 'exchange') body.innerHTML = renderExchange();
+  else if (S.tab === 'work') body.innerHTML = renderWork();
   else if (S.tab === 'upgrades') body.innerHTML = renderUpgrades();
   else if (S.tab === 'contracts') body.innerHTML = renderContracts();
   else body.innerHTML = renderTrophies();
@@ -967,6 +1007,9 @@ function renderTravel() {
         if (!today) today = '<span class="tag">Normal day</span>';
       } else today = '<span class="tag">❓ No rumors</span>';
       const cost = here ? 0 : travelCost(t.id);
+      const bagThere = ok && S.inv.length ? S.inv.reduce((a, i) => a + (sellPrice(i, t.id) || 0), 0) : 0;
+      const bagHere = S.inv.reduce((a, i) => a + (sellPrice(i) || 0), 0);
+      const bagTag = bagThere ? `<span class="tag ${bagThere > bagHere ? 'hot' : 'cold'}">🎒 Your bag sells for ${fmt(bagThere)} here</span>` : '';
       const btn = here ? '<button class="btn sm" disabled>📍 You are here</button>'
         : !ok ? `<button class="btn sm" disabled>🔒 Lv ${t.lvl}</button>`
         : `<button class="btn sm ${S.money >= cost ? 'blue' : ''}" data-act="travel" data-arg="${t.id}" ${S.money < cost ? 'disabled' : ''}>Go ${fmt(cost)}</button>`;
@@ -974,7 +1017,7 @@ function renderTravel() {
         <div class="card-e">${t.e}</div><div class="card-b"><div class="card-t">${t.name}</div>
         <div class="card-d">${t.desc}</div>
         <div class="tags">${hi ? `<span class="tag">💰 Pays well: ${hi}</span>` : ''}${lo ? `<span class="tag">🏷️ Cheap: ${lo}</span>` : ''}${t.strict >= .4 ? '<span class="tag">👮 Strict guards</span>' : ''}${t.fence ? '<span class="tag">🕵️ Buys fakes safely</span>' : ''}${t.contra ? '<span class="tag">☠️ Contraband OK</span>' : ''}</div>
-        <div class="tags">${today}</div></div>${btn}</div></div>`;
+        <div class="tags">${today}${bagTag}</div></div>${btn}</div></div>`;
     }).join('');
 }
 function renderShop() {
@@ -1189,12 +1232,13 @@ function help() {
   showModal({
     art: '🥯', title: 'Welcome to BAGLE!',
     text: `<p>Grandma left you a burlap sack and ₲120. Her last words: <i>"It's all about the bag."</i></p>
-      <p>🛒 <b>Buy</b> goods in the market (left). 🎒 <b>Sell</b> by clicking items in your bag.<br>
-      🗺️ <b>Travel</b> — each town pays wildly different prices. Buy cheap 🍞 in Muddlebrook, sell to hungry dwarves!<br>
-      🔥 <b>Sale streaks</b> boost prices. 🎰 <b>Jackpots</b> pay ×2–×5.<br>
-      🕵️ <b>Fakes</b> are everywhere. Sell them… if you dare. 👮 Guards bust you in strict towns.<br>
-      😇 <b>Good deeds</b> build karma — bag gods reward the kind. 😈 Or be a villain. Pirates love villains.<br>
-      🛍️ Buy <b>bigger bags</b> and <b>mystery bags</b>. ⚒️ <b>Upgrade</b> stuff to get more stuff.</p>`,
+      <p><b>💰 How to make money</b><br>
+      1. 🛒 <b>Buy</b> in the market (left). Each offer shows where it sells best today (→ ⛏️ ₲14 +180%).<br>
+      2. 🗺️ <b>Travel</b> there and 🎒 <b>sell</b> by clicking items in your bag. The Travel tab shows what your whole bag is worth in each town.<br>
+      3. 📈 <b>Exchange</b>: demand changes every day. Wars, cold winters and plagues push prices up for days — stock up early, sell at the peak!<br>
+      4. 🛠️ <b>Work</b>: pick one of 20 professions, play job minigames, invent junk ("Premium Mud Water"), fake quality labels, or pickpocket people.<br>
+      5. 🛌 Sleep on the street for free (same market), or at the inn for new deals. Sleeping refills ⚡ energy.</p>
+      <p>🔥 Sale streaks boost prices. 🎰 Jackpots pay ×2–×5. 🕵️ Fakes & forged labels get you 👮 busted in strict towns. 😇 Good deeds summon bag gods. 🛍️ Bigger bags = bigger profits</p>`,
     choices: [{ label: "Let's get that bag! 💰", cls: 'good' }],
   });
 }
@@ -1226,15 +1270,15 @@ const ACTIONS = {
     showModal({ art: '🧹', title: 'Dump everything?', text: '<p>Sell <b>every</b> item in your bag right here, even at a loss?</p>', choices: [{ label: 'Yes, dump it all', cls: 'danger', act: () => { setTimeout(() => sellMany(false), 50); return 'skip'; } }, { label: 'Nope' }] });
   },
   sleep: () => sleep(),
-  jobs: (a, el) => {
-    if ((S.jobs || 0) >= 5) return;
-    S.jobs = (S.jobs || 0) + 1;
-    const g = Math.round(rnd(4, 9) * lvlScale());
-    S.money += g; SFX.sell(0);
-    const r = el.getBoundingClientRect(); floatText(r.left + r.width / 2, r.top, '+' + fmt(g));
-    log(pick(['🧹 Swept a tavern floor', '🐄 Milked a very rude cow', '🪵 Chopped wood for a dwarf', '🧦 Folded a wizard\'s socks', '🐀 Chased rats out of a cellar']) + ` for ${fmt(g)}.`);
-    commit();
-  },
+  street: () => sleepStreet(),
+  xcat: a => { S.xcat = a; SFX.click(); renderSide(); save(); },
+  prof: a => chooseProf(a),
+  profmenu: () => { showProfList = !showProfList; renderSide(); },
+  job: () => startJob(),
+  craft: a => craft(a),
+  raw: a => buyRaw(a),
+  relabel: a => relabel(+a),
+  steal: a => startSteal(a),
   shake: (a, el) => shakeBag(el),
   mute: () => { S.muted = !S.muted; renderTop(); save(); },
   help: () => help(),
@@ -1260,12 +1304,13 @@ setInterval(() => save(), 10000);
 
 /* ---------- boot ---------- */
 function boot(fresh) {
+  initWorld();
   if (fresh) {
     rollDays(); genMarket(); arrivalRumors();
     while (S.contracts.length < 3) S.contracts.push(genContract());
     log('🧺 Grandma\'s sack is yours. Buy low, sell high. It\'s all about the bag.');
   }
-  lastWallet = -1; shownMoney = S.money;
+  lastWallet = -1; shownMoney = S.money; $('#tb-money').textContent = fmt(S.money);
   render(); save();
   if (fresh) help();
 }
