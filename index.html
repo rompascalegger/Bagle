@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BAGLE — It's All About The Bag</title>
+<meta name="description" content="A ridiculous fantasy trading game. Buy low, sell high, dodge pirates, scam the Empire, and upgrade your BAG.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Nunito:wght@600;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <div class="logo" data-act="help" title="How to play">BAG<span>LE</span> <small>🥯</small></div>
+    <div class="tb-stats">
+      <div class="chip" id="tb-day"></div>
+      <div class="chip" id="tb-town"></div>
+      <div class="chip lvl" id="tb-lvl"></div>
+      <div class="chip" id="tb-karma"></div>
+      <div class="chip" id="tb-heat"></div>
+    </div>
+    <div class="tb-money"><span id="tb-money">₲0</span><small id="tb-nw"></small></div>
+    <div class="tb-btns">
+      <button class="icon-btn" data-act="mute" id="btn-mute" title="Sound">🔊</button>
+      <button class="icon-btn" data-act="help" title="How to play">❓</button>
+    </div>
+  </header>
+
+  <main id="main">
+    <section id="market" class="panel"></section>
+    <section id="bagzone" class="panel"></section>
+    <section id="side" class="panel">
+      <nav id="tabs">
+        <button data-act="tab" data-arg="travel">🗺️<span>Travel</span></button>
+        <button data-act="tab" data-arg="shop">🛍️<span>Bag Shop</span></button>
+        <button data-act="tab" data-arg="upgrades">⚒️<span>Upgrades</span></button>
+        <button data-act="tab" data-arg="contracts">📜<span>Contracts</span></button>
+        <button data-act="tab" data-arg="trophies">🏆<span>Trophies</span></button>
+      </nav>
+      <div id="tabbody"></div>
+    </section>
+  </main>
+
+  <footer id="wallet">
+    <div class="wallet-label">👛 WALLET</div>
+    <div id="bills"></div>
+  </footer>
+</div>
+
+<div id="modal" class="hidden"></div>
+<div id="toasts"></div>
+<canvas id="fx"></canvas>
+<script src="game.js"></script>
+</body>
+</html>
